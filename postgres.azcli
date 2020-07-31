@@ -1,0 +1,107 @@
+# Set parameters
+src=joergjo-dms-src
+dst=joergjo-dms-dst
+version=10.0
+sku=GP_Gen5_2
+rg=dms-test
+location=westeurope
+db_name=dvdrental
+
+user_name=$(id -u -n)
+password=$(openssl rand -base64 20)
+fw_rule_name=${user_name}-pc
+
+# Create JSON files with source, target, and option details
+cp server-template.json source.json
+cp server-template.json target.json
+sed -i "s/__1__/$user_name/g" source.json
+sed -i "s/__1__/$user_name/g" target.json
+sed -i "s/__2__/$src/g" source.json
+sed -i "s/__2__/$dst/g" target.json
+sed -i "s/__3__/$password/g" source.json
+sed -i "s/__3__/$password/g" target.json
+
+cp options-template.json options.json
+sed -i "s/__1__/$db_name/g" options.json
+
+# Get current IP to create Server firewall rules
+my_ip=$(curl -s 'https://api.ipify.org?format=text')
+
+# Create resource group, servers, databases, and firewalls rules
+az group create -g $rg \
+  -l $location
+
+az postgres server create -n $src \
+  -g $rg \
+  -l $location \
+  -u $user_name \
+  -p $password \
+  --version $version \
+  --sku-name $sku
+
+az postgres server create -n $dst \
+  -g $rg \
+  -l $location \
+  -u $user_name \
+  -p $password \
+  --version $version \
+  --sku-name $sku
+
+az postgres server firewall-rule create -n $fw_rule_name \
+  -s $src \
+  -g $rg \
+  --start-ip-address $my_ip \
+  --end-ip-address $my_ip
+
+az postgres server firewall-rule create -n $fw_rule_name \
+  -s $dst \
+  -g $rg \
+  --start-ip-address $my_ip \
+  --end-ip-address $my_ip
+
+az postgres server firewall-rule create -n all-azure \
+  -s $src \
+  -g $rg \
+  --start-ip-address 0.0.0.0 \
+  --end-ip-address 0.0.0.0
+
+az postgres server firewall-rule create -n all-azure \
+  -s $dst \
+  -g $rg \
+  --start-ip-address 0.0.0.0 \
+  --end-ip-address 0.0.0.0
+
+az postgres db create -n $db_name -s $src -g $rg
+az postgres db create -n $db_name -s $dst -g $rg
+
+# Restore database, create and prep dst schema
+# Note that the dvdrental files are still hardcoded here!
+src_fqdn=$(az postgres server show -n $src -g $rg --query fullyQualifiedDomainName -o tsv)
+dst_fqdn=$(az postgres server show -n $dst -g $rg --query fullyQualifiedDomainName -o tsv)
+
+pg_restore -U ${user_name}@${src} -h $src_fqdn -d $db_name --clean --verbose ./dvdrental.tar
+pg_dump -o -U ${user_name}@${src} -h $src_fqdn -d $db_name -s  > ./dvdrentalSchema.sql
+
+psql -U ${user_name}@${dst} -h $dst_fqdn -d $db_name -a -q -f ./dvdrentalSchema.sql
+psql -U ${user_name}@${dst} -h $dst_fqdn -d $db_name -a -q -f ./prepMigration.sql
+
+# Enable logical decoding on src -- required to use DMS!
+# See https://docs.microsoft.com/en-us/azure/postgresql/concepts-logical
+az postgres server configuration set -s $src \
+    -g $rg \
+    --name azure.replication_support \
+    --value logical
+
+az postgres server restart -n $src -g $rg
+
+#####################################
+#                                   #
+# Now, use the steps in dms.azcli   #
+#                                   #
+#####################################
+
+# Once you're done
+az postgres server delete -n $src -g $rg
+az postgres server delete -n $dst -g $rg
+# Or
+az group delete -g $rg -y

@@ -1,0 +1,70 @@
+location=westeurope
+rg=dms-test
+dms=dms-test-01
+project=azure-to-azure
+task=dvdrental-01
+
+az network vnet create -n ${dms}-vnet \
+  -g $rg \
+  --address-prefix 10.200.200.0/24 \
+  --subnet-name dms \
+  --subnet-prefix 10.200.200.0/25
+
+subnet_id=$(az network vnet subnet show -n dms \
+  -g $rg \
+  --vnet-name ${dms}-vnet \
+  --query id \
+  --output tsv)
+
+az dms create -n $dms \
+  -g $rg \
+  -l $location \
+  --subnet $subnet_id \
+  --sku-name Premium_4vCores
+
+# Note that DMS assumes a classic PostgreSQL server, but this setting also works for Azure Database
+az dms project create -n $project \
+  -g $rg \
+  -l $location \
+  --service-name $dms \
+  --source-platform PostgreSQL \
+  --target-platform AzureDbforPostgreSQL
+
+az dms project task create -n $task \
+  -g $rg \
+  --project-name $project \
+  --source-connection-json ./source.json \
+  --database-options-json ./options.json \
+  --service-name $dms \
+  --target-connection-json ./target.json \
+  --task-type OnlineMigration
+
+# If the task fails, remove it...
+az dms project task delete -n $task \
+  -g $rg \
+  --project-name $project \
+  --service-name $dms
+
+az dms project task show -n $task \
+  -g $rg \
+  --service-name $dms \
+  --project-name $project \
+  --expand output \
+  --query 'properties.output[].migrationState | [0]'
+
+db=$(jq -r .[0].target_database_name options.json)
+
+az dms project task cutover -n $task \
+  -g $rg \
+  --service-name $dms \
+  --project-name $project \
+  --object-name $db
+
+az dms project task show -n $task \
+  -g $rg \
+  --service-name $dms \
+  --project-name $project \
+  --expand output \
+  --query 'properties.output[].migrationState | [0]'
+
+az dms delete -n $dms -g $rg -y
