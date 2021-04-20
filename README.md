@@ -1,5 +1,5 @@
 # azure-dms-play-by-play
-This is a scripted verion of the [Tutorial: Migrate Azure DB for PostgreSQL - Single Server to Azure DB for PostgreSQL - 
+This is a scripted version of the [Tutorial: Migrate Azure DB for PostgreSQL - Single Server to Azure DB for PostgreSQL - 
 Single Server or Hyperscale (Citus) online using DMS via the Azure portal](https://docs.microsoft.com/en-us/azure/dms/tutorial-azure-postgresql-to-azure-postgresql-online-portal), 
 but for the special use case of migrating from single server to single server (e.g. to make use of [large storage](https://azure.microsoft.com/en-us/updates/postgresql-large-storage-generally-available/).
 
